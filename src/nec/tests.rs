@@ -63,6 +63,7 @@ fn deck(m: &EzModel, engine: Engine) -> Deck {
         &Options {
             engine,
             source_name: Some("test.ez".into()),
+            sweep: false,
         },
     )
     .expect("converts")
@@ -258,6 +259,7 @@ fn split_source_at_a_wire_end() {
         &Options {
             engine: Engine::Nec2,
             source_name: None,
+            sweep: false,
         },
     )
     .unwrap_err();
@@ -476,7 +478,8 @@ fn shorted_stub() {
             &m,
             &Options {
                 engine: Engine::Nec4,
-                source_name: None
+                source_name: None,
+                sweep: false,
             }
         )
         .is_err()
@@ -748,9 +751,175 @@ fn a_model_with_no_wires_is_refused() {
             &m,
             &Options {
                 engine: Engine::Nec4,
-                source_name: None
+                source_name: None,
+                sweep: false,
             }
         )
         .is_err()
     );
+}
+
+fn swept(m: &EzModel, engine: Engine) -> Result<Deck, ConvertError> {
+    write_deck(
+        m,
+        &Options {
+            engine,
+            source_name: None,
+            sweep: true,
+        },
+    )
+}
+
+fn sweep(start_mhz: f32, stop_mhz: f32, step_mhz: f32) -> Option<Sweep> {
+    Some(Sweep {
+        start_mhz,
+        stop_mhz,
+        step_mhz,
+    })
+}
+
+#[test]
+fn sweep_of_a_model_that_does_not_depend_on_frequency() {
+    let mut m = base();
+    assert!(swept(&m, Engine::Nec2).is_err(), "no stored sweep");
+
+    // 14 to 14.3 in steps of 0.05 is seven frequencies on one FR card.
+    m.sweep = sweep(14.0, 14.3, 0.05);
+    m.loads = vec![Load {
+        wire: 1,
+        position_pct: 30.0,
+        value: LoadValue::Rlc {
+            form: RlcForm::Series,
+            r: 1.5,
+            l_h: 2.25e-6,
+            c_f: 33e-12,
+            r_freq_mhz: 0.0,
+        },
+        z_at_design: (0.0, 0.0),
+    }];
+    for engine in [Engine::Nec2, Engine::Nec4, Engine::Nec5] {
+        let d = swept(&m, engine).unwrap();
+        assert_eq!(cards(&d, "FR"), ["0 7 0 0 14 0.05"]);
+        assert_eq!(cards(&d, "LD").len(), 1);
+        assert_eq!(cards(&d, "RP").len(), 1);
+        assert!(d.notes.iter().any(|n| n.contains("7 frequencies")));
+    }
+    // A stop that isn't on a step is not reached.
+    m.sweep = sweep(14.0, 14.32, 0.05);
+    assert_eq!(cards(&swept(&m, Engine::Nec2).unwrap(), "FR"), ["0 7 0 0 14 0.05"]);
+    m.sweep = sweep(14.0, 14.0, 0.05);
+    assert_eq!(cards(&swept(&m, Engine::Nec2).unwrap(), "FR"), ["0 1 0 0 14 0"]);
+
+    for bad in [sweep(14.0, 14.3, 0.0), sweep(14.3, 14.0, 0.05), sweep(0.0, 1.0, 0.5)] {
+        m.sweep = bad;
+        assert!(swept(&m, Engine::Nec2).is_err());
+    }
+    m.sweep = sweep(1.0, 30.0, 0.001);
+    assert!(swept(&m, Engine::Nec2).is_err(), "29001 frequencies");
+}
+
+#[test]
+fn sweep_repeats_what_depends_on_frequency() {
+    let mut m = base();
+    m.sweep = sweep(14.0, 14.2, 0.1);
+    m.wires[0].resistivity_ohm_m = 1.74e-8;
+    // A 1 uH trap with 2 ohm in series: 2 + j2πfL.
+    m.loads = vec![Load {
+        wire: 1,
+        position_pct: 30.0,
+        value: LoadValue::Rlc {
+            form: RlcForm::Trap,
+            r: 2.0,
+            l_h: 1e-6,
+            c_f: 0.0,
+            r_freq_mhz: 0.0,
+        },
+        z_at_design: (2.0, 89.22123),
+    }];
+    let d = swept(&m, Engine::Nec4).unwrap();
+    let body: Vec<&str> = d.text.lines().skip_while(|l| !l.starts_with("GE")).collect();
+    assert_eq!(
+        body,
+        [
+            "GE 0",
+            "LD 5 0 0 0 5.747127E7",
+            "LD 4 1 7 7 2 87.96459",
+            "FR 0 1 0 0 14 0",
+            "EX 0 1 11 0 1.414214 0",
+            "RP 0 1 361 1000 67 0 0 1",
+            "LD 5 0 0 0 5.747127E7",
+            "LD 4 1 7 7 2 88.59291",
+            "FR 0 1 0 0 14.1 0",
+            "RP 0 1 361 1000 67 0 0 1",
+            "LD 5 0 0 0 5.747127E7",
+            "LD 4 1 7 7 2 89.22123",
+            "FR 0 1 0 0 14.2 0",
+            "RP 0 1 361 1000 67 0 0 1",
+            "EN",
+        ]
+    );
+    assert!(d.notes.iter().any(|n| n.contains("for each frequency of the sweep")));
+    assert!(!d.notes.iter().any(|n| n.contains("only at that frequency")));
+    // The stored impedance is checked at the model's frequency, not the sweep's first.
+    assert!(!d.notes.iter().any(|n| n.contains("but the file stores")));
+
+    // A resistance that scales with frequency: 2 ohm at 3.55 MHz.
+    m.loads[0].value = LoadValue::Rlc {
+        form: RlcForm::Series,
+        r: 2.0,
+        l_h: 1e-6,
+        c_f: 0.0,
+        r_freq_mhz: 3.55,
+    };
+    let ld = cards(&swept(&m, Engine::Nec2).unwrap(), "LD");
+    assert_eq!(ld.len(), 6);
+    assert_eq!(ld[1], "0 1 7 7 3.971731 1E-6 0");
+    assert_eq!(ld[5], "0 1 7 7 4 1E-6 0", "2·√(14.2/3.55)");
+
+    // Networks: a lossy line is an NT for each frequency, and other lines go with it.
+    let mut m = two_wires();
+    m.sweep = sweep(14.0, 14.2, 0.1);
+    let to2 = || TlEnd2::Wire {
+        wire: 2,
+        position_pct: 50.0,
+    };
+    let mut lossy = line(to2(), 75.0, Some(3.21), 0.66);
+    lossy.loss_db_per_m = 0.049212597;
+    m.transmission_lines = vec![lossy, line(to2(), 50.0, Some(1.0), 1.0)];
+    for engine in [Engine::Nec2, Engine::Nec4, Engine::Nec5] {
+        let d = swept(&m, engine).unwrap();
+        let nt = cards(&d, "NT");
+        assert_eq!(nt.len(), 3);
+        assert_ne!(nt[0], nt[1]);
+        assert_eq!(cards(&d, "TL").len(), 3);
+        assert_eq!(cards(&d, "EX").len(), 1);
+        assert_eq!(cards(&d, "FR"), ["0 1 0 0 14 0", "0 1 0 0 14.1 0", "0 1 0 0 14.2 0"]);
+        // The last block is the deck for the model's own frequency.
+        assert_eq!(nt[2], cards(&deck(&m, engine), "NT")[0]);
+    }
+}
+
+#[test]
+fn sweep_on_nec5_repeats_the_mininec_ground() {
+    // NEC-5 solves only the first frequency over perfect ground unless GN and
+    // GD are given again; NEC-2 and NEC-4.2 keep the ground.
+    let mut m = base();
+    m.sweep = sweep(14.0, 14.2, 0.1);
+    m.ground = mininec();
+    for engine in [Engine::Nec2, Engine::Nec4] {
+        let d = swept(&m, engine).unwrap();
+        assert_eq!(cards(&d, "FR"), ["0 3 0 0 14 0.1"]);
+        assert_eq!(cards(&d, "GD").len(), 1);
+    }
+    let d = swept(&m, Engine::Nec5).unwrap();
+    assert_eq!(cards(&d, "FR"), ["0 1 0 0 14 0", "0 1 0 0 14.1 0", "0 1 0 0 14.2 0"]);
+    assert_eq!(cards(&d, "GN"), ["1", "1", "1"]);
+    assert_eq!(cards(&d, "GD").len(), 3);
+    assert_eq!(cards(&d, "EX").len(), 1);
+    assert_eq!(cards(&d, "RP").len(), 3);
+    assert!(d.notes.iter().any(|n| n.contains("one frequency only")));
+
+    // Other grounds step on one FR card.
+    m.ground = Ground::Perfect;
+    assert_eq!(cards(&swept(&m, Engine::Nec5).unwrap(), "FR"), ["0 3 0 0 14 0.1"]);
 }

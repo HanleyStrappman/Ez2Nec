@@ -5,13 +5,16 @@ use ez2nec::nec::{Engine, Options, write_deck};
 use ez2nec::{dump, ez};
 
 const USAGE: &str = "\
-Usage: ez2nec --engine nec2|nec4|nec5 [-o FILE.nec] FILE.ez
+Usage: ez2nec --engine nec2|nec4|nec5 [--sweep] [-o FILE.nec] FILE.ez
        ez2nec --dump FILE.ez...
 
   --engine E   Write a NEC deck for NEC-2, NEC-4.2 or NEC-5. The deck goes to
                standard output unless -o names a file. What the engine can't
                express exactly is noted in the deck's CM lines and on
                standard error.
+  --sweep      Run the frequency sweep stored in the model instead of its one
+               frequency. Loads and networks whose values depend on frequency
+               are written again for each frequency.
   -o FILE      Write the deck to FILE.
   --dump       Print each decoded model, and anything in the file that the
                decoder places but doesn't understand or can't account for.
@@ -31,6 +34,7 @@ fn read(path: &str) -> Result<ez::EzFile, String> {
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut want_dump = false;
+    let mut sweep = false;
     let mut engine = None;
     let mut output = None;
     let mut files = Vec::new();
@@ -45,6 +49,7 @@ fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "--dump" => want_dump = true,
+            "--sweep" => sweep = true,
             "--engine" => {
                 let Some(name) = args.next() else {
                     return usage_error("--engine needs a name");
@@ -69,8 +74,8 @@ fn main() -> ExitCode {
     }
 
     if want_dump {
-        if engine.is_some() || output.is_some() {
-            return usage_error("--dump can't be combined with --engine or -o");
+        if engine.is_some() || output.is_some() || sweep {
+            return usage_error("--dump can't be combined with --engine, --sweep or -o");
         }
         let mut failed = false;
         for (i, path) in files.iter().enumerate() {
@@ -104,7 +109,14 @@ fn main() -> ExitCode {
         }
     };
     let source_name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned());
-    let deck = match write_deck(&file.model, &Options { engine, source_name }) {
+    let deck = match write_deck(
+        &file.model,
+        &Options {
+            engine,
+            source_name,
+            sweep,
+        },
+    ) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("ez2nec: {path}: {e}");

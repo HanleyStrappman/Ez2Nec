@@ -8,6 +8,7 @@ whatever happens to the program.
 ## Usage
 
     ez2nec --engine nec4 -o model.nec model.ez
+    ez2nec --engine nec4 --sweep -o model.nec model.ez
     ez2nec --dump model.ez
 
 `--engine` takes `nec2`, `nec4` (NEC-4.2) or `nec5`. The deck goes to standard
@@ -40,7 +41,21 @@ no stepped-diameter correction is applied.
 Whatever the engine can't express exactly is said in the deck, in `CM ez2nec:`
 lines, and on standard error: for example an element computed at one
 frequency, or a one-segment feed wire that NEC-5 needs as two segments.
-The deck runs the model's frequency only; a stored sweep is noted, not written.
+
+The deck runs the model's frequency. With `--sweep` it runs the frequency
+sweep stored in the model instead: start, then each step up to stop.
+
+- Usually that is one `FR` card that steps the frequency.
+- A trap or Laplace load, a line with loss, an L network, or a load resistance
+  that scales with frequency has a different value at each frequency. The deck
+  then has a block for each frequency: every `LD`, `FR`, the ground cards,
+  every `NT` and `TL`, and `RP`. (NEC replaces all loads when new `LD` cards
+  follow a run, and all networks when new `NT` or `TL` cards do.)
+- NEC-5 with the MININEC-type ground gets a block for each frequency too.
+  Given `GN 1` and `GD` once, NEC-5 solves the first frequency over perfect
+  ground and the later ones over the real ground.
+
+Without `--sweep`, a stored sweep is noted and not written.
 
 `--dump` prints the decoded model in its own display unit: wires, sources,
 loads, transmission lines, L networks, ground, wire loss, insulation, plot and

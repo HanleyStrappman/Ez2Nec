@@ -56,6 +56,8 @@ pub struct Options {
     pub engine: Engine,
     /// The `.ez` file's name, for the deck's comment lines.
     pub source_name: Option<String>,
+    /// Write the model's stored frequency sweep instead of its one frequency.
+    pub sweep: bool,
 }
 
 /// A written deck. `notes` repeats what the deck's `CM ez2nec:` lines say.
@@ -83,6 +85,8 @@ const DUMMY_TAG: usize = 9901;
 /// A shorted stub's far end: this conductance across the dummy segment.
 const STUB_SHORT_S: f64 = 1e10;
 const SQRT2: f64 = std::f64::consts::SQRT_2;
+/// More frequencies than this in a stored sweep is taken as a mistake.
+const MAX_SWEEP: usize = 10_000;
 
 /// Formats a number with at most `sig` significant digits, in the shortest form.
 fn number(x: f64, sig: usize) -> String {
@@ -348,9 +352,61 @@ fn close_enough(computed: C, stored: (f32, f32)) -> bool {
     (computed - stored).abs() <= 1e-3 * stored.abs().max(1e-6)
 }
 
-/// Writes the deck for `options.engine`.
-pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> {
+/// The frequencies of a stored sweep: start, then steps up to stop.
+fn sweep_frequencies(s: &Sweep) -> Result<Vec<f64>, ConvertError> {
+    // Through seven digits, so that 14.3 stored as a float is 14.3 again.
+    let exact = |x: f32| number(x as f64, 7).parse::<f64>().unwrap_or(x as f64);
+    let (start, stop, step) = (exact(s.start_mhz), exact(s.stop_mhz), exact(s.step_mhz));
+    if !(start > 0.0 && step > 0.0 && stop >= start) {
+        return Err(ConvertError(format!(
+            "the stored sweep, {start} to {stop} MHz in steps of {step}, can't be run"
+        )));
+    }
+    let count = ((stop - start) / step + 1e-6).floor() + 1.0;
+    if count > MAX_SWEEP as f64 {
+        return Err(ConvertError(format!(
+            "the stored sweep, {start} to {stop} MHz in steps of {step}, has more than {MAX_SWEEP} frequencies"
+        )));
+    }
+    Ok((0..count as usize)
+        .map(|i| exact((start + i as f64 * step) as f32))
+        .collect())
+}
+
+/// The cards for one frequency, by kind, before they are put in order.
+struct Cards {
+    notes: Vec<String>,
+    /// Segments per wire and wire radii (metres) as written.
+    segs: Vec<u16>,
+    radii: Vec<f64>,
+    dummies: Vec<[f64; 3]>,
+    scale: f64,
+    ge: i64,
+    loads: Vec<String>,
+    ground: Vec<String>,
+    sources: Vec<String>,
+    networks: Vec<String>,
+    pattern: Vec<String>,
+    /// True if a load or network card's values depend on the frequency.
+    varies: bool,
+    /// True if the engine loses the ground after its first frequency.
+    ground_lapses: bool,
+}
+
+/// The model's cards with frequency-dependent values computed at `f_mhz`.
+fn cards_at(m: &EzModel, options: &Options, f_mhz: f64) -> Result<Cards, ConvertError> {
     let engine = options.engine;
+    let design_mhz = m.frequency_mhz as f64;
+    // How a value computed for the frequency is described in a note.
+    let computed = if options.sweep {
+        "computed for each frequency of the sweep".to_string()
+    } else {
+        format!(
+            "computed at {} MHz, and is right only at that frequency",
+            number(f_mhz, 7)
+        )
+    };
+    let mut varies = false;
     let mut w = Writer {
         engine,
         lines: Vec::new(),
@@ -363,7 +419,6 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
         at_nodes: engine == Engine::Nec5,
         grounded,
     };
-    let f_mhz = m.frequency_mhz as f64;
     if m.wires.is_empty() {
         return Err(ConvertError("the model has no wires".into()));
     }
@@ -400,7 +455,7 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
     // Geometry is written in the model's display unit, with GS to metres.
     let scale = match m.units {
         LengthUnit::Wavelengths => 1.0,
-        u => u.metres_per_unit(f_mhz),
+        u => u.metres_per_unit(design_mhz),
     };
 
     // Cards that follow GE are collected by kind, then written in order.
@@ -484,20 +539,23 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
         let no = i + 1;
         let tag = load.wire as i64;
         let seg = segment_at(load.position_pct, g.segments(load.wire)) as i64;
-        let fixed = |z: C, what: &str, w: &mut Writer, loads: &mut Writer| -> Result<(), ConvertError> {
+        let fixed = |z_at: &dyn Fn(f64) -> C,
+                     what: &str,
+                     w: &mut Writer,
+                     loads: &mut Writer|
+         -> Result<(), ConvertError> {
+            let z = z_at(design_mhz);
             if !close_enough(z, load.z_at_design) {
                 w.note(format!(
-                    "load {no}: computed {} {:+} ohm, but the file stores {} {:+}; using the computed value",
+                    "load {no}: computed {} {:+} ohm at the model's frequency, but the file stores {} {:+}; using the computed value",
                     number(z.re, 6),
                     z.im,
                     load.z_at_design.0,
                     load.z_at_design.1
                 ));
             }
-            w.note(format!(
-                "load {no} ({what}) is written as R + jX at {} MHz, and is right only at that frequency",
-                number(f_mhz, 7)
-            ));
+            w.note(format!("load {no} ({what}) is written as R + jX, {computed}"));
+            let z = z_at(f_mhz);
             loads.card("LD", &[4, tag, seg, seg], &[z.re, z.im])
         };
         match &load.value {
@@ -514,22 +572,26 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
                     RlcForm::Series | RlcForm::Parallel => {
                         let kind = if *form == RlcForm::Series { 0 } else { 1 };
                         if rf > 0.0 && r != 0.0 {
+                            varies = true;
                             w.note(format!(
-                                "load {no}: R is {} ohm at {} MHz and scales as the square root of frequency; the deck has its value at {} MHz",
-                                number(r, 7), number(rf, 7), number(f_mhz, 7)
+                                "load {no}: R is {} ohm at {} MHz and scales as the square root of frequency; the deck has its value {computed}",
+                                number(r, 7),
+                                number(rf, 7)
                             ));
                         }
                         loads.card("LD", &[kind, tag, seg, seg], &[elements::r_at(r, rf, f_mhz), l, c])?;
                     }
                     RlcForm::Trap => {
-                        let z = elements::rlc(RlcForm::Trap, r, l, c, rf, f_mhz).unwrap_or(C::new(0.0, 0.0));
-                        fixed(z, "a trap", &mut w, &mut loads)?;
+                        let z_at = |f: f64| elements::rlc(RlcForm::Trap, r, l, c, rf, f).unwrap_or(C::new(0.0, 0.0));
+                        varies = true;
+                        fixed(&z_at, "a trap", &mut w, &mut loads)?;
                     }
                 }
             }
             LoadValue::Laplace { numerator, denominator } => {
-                let z = elements::laplace(numerator, denominator, f_mhz);
-                fixed(z, "a Laplace load", &mut w, &mut loads)?;
+                let z_at = |f: f64| elements::laplace(numerator, denominator, f);
+                varies = true;
+                fixed(&z_at, "a Laplace load", &mut w, &mut loads)?;
             }
         }
     }
@@ -605,9 +667,9 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
                         &[ta, sa, tb, sb],
                         &[y11.re, y11.im, y12.re, y12.im, y11.re, y11.im],
                     )?;
+                    varies = true;
                     w.note(format!(
-                        "transmission line {no} has loss, which NEC's TL card lacks; it is a network (NT) computed at {} MHz, and is right only at that frequency",
-                        number(f_mhz, 7)
+                        "transmission line {no} has loss, which NEC's TL card lacks; it is a network (NT) {computed}"
                     ));
                 } else {
                     // NEC's TL card takes the electrical length; 0 means the
@@ -628,9 +690,9 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
                 if lossy {
                     let y = elements::lossy_shorted_stub(z0, length as f64, vf, t.loss_db_per_m as f64, f_mhz);
                     networks.card("NT", &[ta, sa, d, 1], &[y.re, y.im, 0.0, 0.0, 0.0, 0.0])?;
+                    varies = true;
                     w.note(format!(
-                        "transmission line {no} is a shorted stub with loss; it is a network (NT) computed at {} MHz, and is right only at that frequency",
-                        number(f_mhz, 7)
+                        "transmission line {no} is a shorted stub with loss; it is a network (NT) {computed}"
                     ));
                 } else {
                     networks.card(
@@ -660,11 +722,8 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
             ],
             &[y11.re, y11.im, y12.re, y12.im, y22.re, y22.im],
         )?;
-        w.note(format!(
-            "L network {} is a network (NT) computed at {} MHz, and is right only at that frequency",
-            i + 1,
-            number(f_mhz, 7)
-        ));
+        varies = true;
+        w.note(format!("L network {} is a network (NT) {computed}", i + 1));
         if n.ports.iter().any(|p| p.connection == Connection::Parallel) {
             w.note(format!(
                 "L network {}: a port's R, L and C are in parallel; this form has not been checked against EZNEC",
@@ -798,12 +857,70 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
         )?;
     }
 
+    // NEC-5 with GN 1 and a GD card (the MININEC-type ground) solves its
+    // first frequency over perfect ground and every later one over the GD
+    // card's ground, with a stepped FR card or a new one, unless the ground
+    // cards are given again. On a 10 ft dipole the second frequency's
+    // resistance came out 2.58 ohms for 1.62, and the gain 2 dB low.
+    let ground_lapses = engine == Engine::Nec5 && ground.lines.iter().any(|l| l.starts_with("GD"));
+    Ok(Cards {
+        notes: w.notes,
+        segs: g.segs,
+        radii,
+        dummies,
+        scale,
+        ge,
+        loads: loads.lines,
+        ground: ground.lines,
+        sources: sources.lines,
+        networks: networks.lines,
+        pattern: pattern.lines,
+        varies,
+        ground_lapses,
+    })
+}
+
+/// Writes the deck for `options.engine`.
+pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> {
+    let engine = options.engine;
+    let design_mhz = m.frequency_mhz as f64;
+    let frequencies = match (&m.sweep, options.sweep) {
+        (_, false) => vec![design_mhz],
+        (Some(s), true) => sweep_frequencies(s)?,
+        (None, true) => return Err(ConvertError("the model stores no frequency sweep".into())),
+    };
+    let first = cards_at(m, options, frequencies[0])?;
+    let mut notes = first.notes.clone();
+    let mut note = |text: String| {
+        if !notes.contains(&text) {
+            notes.push(text);
+        }
+    };
     if let Some(s) = &m.sweep {
-        w.note(format!(
-            "the model stores a sweep from {} to {} MHz in steps of {}; the deck runs the model's frequency only",
-            s.start_mhz, s.stop_mhz, s.step_mhz
-        ));
+        if options.sweep {
+            note(format!(
+                "the deck runs the stored sweep, {} to {} MHz in steps of {} ({} frequencies), not the model's frequency of {} MHz",
+                s.start_mhz,
+                s.stop_mhz,
+                s.step_mhz,
+                frequencies.len(),
+                number(design_mhz, 7)
+            ));
+            if frequencies.len() > 1 {
+                if first.varies {
+                    note("loads and networks whose values depend on frequency are written again, with FR and RP, for each frequency".into());
+                } else if first.ground_lapses {
+                    note("NEC-5 keeps this ground for one frequency only, so the ground cards are written again, with FR and RP, for each frequency".into());
+                }
+            }
+        } else {
+            note(format!(
+                "the model stores a sweep from {} to {} MHz in steps of {}; the deck runs the model's frequency only",
+                s.start_mhz, s.stop_mhz, s.step_mhz
+            ));
+        }
     }
+    let (scale, radii, dummies) = (first.scale, &first.radii, &first.dummies);
 
     // Assemble.
     let mut out = Writer {
@@ -823,7 +940,7 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
         env!("CARGO_PKG_VERSION"),
         engine.name()
     ));
-    for line in w.notes.iter() {
+    for line in notes.iter() {
         // Keep comment lines within the engine's limit too.
         let mut rest = line.as_str();
         let width = engine.line_limit() - "CM ez2nec:   ".len();
@@ -844,7 +961,7 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
     for (i, wire) in m.wires.iter().enumerate() {
         let mut v: Vec<f64> = wire.end1.iter().chain(&wire.end2).map(|&c| c as f64 / scale).collect();
         v.push(radii[i] / scale);
-        out.card("GW", &[i as i64 + 1, g.segs[i] as i64], &v)?;
+        out.card("GW", &[i as i64 + 1, first.segs[i] as i64], &v)?;
     }
     for (i, c) in dummies.iter().enumerate() {
         // A short wire far from the model: 2 cm long, 0.5 mm radius. NEC-5
@@ -867,16 +984,36 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
     if scale != 1.0 {
         out.card("GS", &[0, 0], &[scale])?;
     }
-    out.card("GE", &[ge], &[])?;
-    out.lines.extend(loads.lines);
-    out.card("FR", &[0, 1, 0, 0], &[f_mhz, 0.0])?;
-    out.lines.extend(ground.lines);
-    out.lines.extend(sources.lines);
-    out.lines.extend(networks.lines);
-    out.lines.extend(pattern.lines);
+    out.card("GE", &[first.ge], &[])?;
+    if first.varies || first.ground_lapses {
+        // NEC keeps the sources from one run to the next. A new group of LD
+        // cards replaces all loads, and a new group of NT and TL cards all
+        // networks, so each frequency gets every one of them again, and the
+        // ground cards too (see `ground_lapses`).
+        for (i, &f) in frequencies.iter().enumerate() {
+            let cards = if i == 0 { None } else { Some(cards_at(m, options, f)?) };
+            let cards = cards.as_ref().unwrap_or(&first);
+            out.lines.extend(cards.loads.iter().cloned());
+            out.card("FR", &[0, 1, 0, 0], &[f, 0.0])?;
+            out.lines.extend(first.ground.iter().cloned());
+            if i == 0 {
+                out.lines.extend(first.sources.iter().cloned());
+            }
+            out.lines.extend(cards.networks.iter().cloned());
+            out.lines.extend(cards.pattern.iter().cloned());
+        }
+    } else {
+        out.lines.extend(first.loads.iter().cloned());
+        let step = frequencies.get(1).map_or(0.0, |f| f - frequencies[0]);
+        out.card("FR", &[0, frequencies.len() as i64, 0, 0], &[frequencies[0], step])?;
+        out.lines.extend(first.ground.iter().cloned());
+        out.lines.extend(first.sources.iter().cloned());
+        out.lines.extend(first.networks.iter().cloned());
+        out.lines.extend(first.pattern.iter().cloned());
+    }
     out.lines.push("EN".into());
 
     let mut text = out.lines.join("\n");
     text.push('\n');
-    Ok(Deck { text, notes: w.notes })
+    Ok(Deck { text, notes })
 }
