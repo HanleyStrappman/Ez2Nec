@@ -429,7 +429,10 @@ fn read_plot(b: &mut Bytes, notes: &mut Vec<String>) -> Result<Plot, EzError> {
     let step_deg = b.f32(0x0E)?;
     let step_copy = b.f32(0x5A)?;
     if step_copy != step_deg {
-        notes.push(format!("plot step is {step_deg} at 0x0E but {step_copy} at 0x5A"));
+        // EZNEC shows and exports the one at 0x0E (course models mod7-2 and Mod18-6b).
+        notes.push(format!(
+            "plot step is {step_deg} at 0x0E, which EZNEC uses, but {step_copy} at 0x5A"
+        ));
     }
     Ok(Plot {
         kind,
@@ -535,6 +538,7 @@ fn read_tl(b: &mut Bytes, off: usize) -> Result<TransmissionLine, EzError> {
     let [position_b_pct, z0_ohm, length_m, velocity_factor] = b.f32s::<4>(off + 8)?;
     let end2 = match wire_b {
         -1 => TlEnd2::ShortedStub,
+        -2 => TlEnd2::OpenStub,
         w => TlEnd2::Wire {
             wire: u16::try_from(w)
                 .map_err(|_| EzError::at(off + 6, format!("transmission line end 2 wire number {w}")))?,

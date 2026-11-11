@@ -88,6 +88,12 @@ pub fn lossy_shorted_stub(z0: f64, length_m: f64, vf: f64, loss_db_per_m: f64, f
     lossy_line(z0, length_m, vf, loss_db_per_m, f_mhz).0
 }
 
+/// The input admittance of a line with loss whose far end is open.
+pub fn lossy_open_stub(z0: f64, length_m: f64, vf: f64, loss_db_per_m: f64, f_mhz: f64) -> C {
+    let (y11, y12) = lossy_line(z0, length_m, vf, loss_db_per_m, f_mhz);
+    y11 - y12 * y12 / y11
+}
+
 fn line_constants(z0: f64, vf: f64, loss_db_per_m: f64, f_mhz: f64) -> (C, C) {
     let w = omega(f_mhz);
     let v = SPEED_OF_LIGHT_M_PER_US * 1e6 * vf;
@@ -199,6 +205,24 @@ mod tests {
         );
         assert!((z.re - 0.9166667).abs() < 1e-7);
         assert!((z.im - 1.5566798e-10).abs() < 1e-15);
+    }
+
+    #[test]
+    fn open_stub_is_the_dual_of_a_shorted_one() {
+        // Without loss: -j cot(bl)/Z0 shorted, +j tan(bl)/Z0 open.
+        let bl = omega(14.2) * 1.524 / (SPEED_OF_LIGHT_M_PER_US * 1e6 * 0.66);
+        close(
+            lossy_shorted_stub(75.0, 1.524, 0.66, 0.0, 14.2),
+            0.0,
+            -1.0 / (75.0 * bl.tan()),
+            1e-9,
+        );
+        close(
+            lossy_open_stub(75.0, 1.524, 0.66, 0.0, 14.2),
+            0.0,
+            bl.tan() / 75.0,
+            1e-9,
+        );
     }
 
     #[test]

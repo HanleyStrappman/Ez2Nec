@@ -243,6 +243,7 @@ pub fn dump(file: &EzFile) -> String {
                 match &t.end2 {
                     TlEnd2::Wire { wire, position_pct } => at(*wire, *position_pct),
                     TlEnd2::ShortedStub => "a shorted stub end".to_string(),
+                    TlEnd2::OpenStub => "an open stub end".to_string(),
                 },
                 f(t.z0_ohm.abs()),
                 if t.reversed() { " reversed" } else { "" },

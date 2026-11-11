@@ -471,6 +471,13 @@ fn shorted_stub() {
     assert_eq!(cards(&d, "TL"), ["1 11 9901 1 450 1.2192 0 0 1E10 0"]);
     assert!(cards(&d, "GW")[1].starts_with("9901 2 "));
 
+    // An open stub is the same line with nothing across the dummy segment
+    // (EZNEC's export of stub-open.ez).
+    m.transmission_lines = vec![line(TlEnd2::OpenStub, 450.0, Some(1.2192), 1.0)];
+    let d = deck(&m, Engine::Nec4);
+    assert_eq!(cards(&d, "TL"), ["1 11 9901 1 450 1.2192 0 0 0 0"]);
+    assert!(cards(&d, "GW")[1].starts_with("9901 1 "));
+
     // A stub needs a length.
     m.transmission_lines = vec![line(TlEnd2::ShortedStub, 450.0, None, 1.0)];
     assert!(
@@ -583,6 +590,27 @@ fn grounds() {
     let d = deck(&m, Engine::Nec4);
     assert_eq!(cards(&d, "GD"), ["2 0 0 0 17 0.0045 0 0.6096"]);
     assert!(d.notes.iter().any(|n| n.contains("two ground media")));
+
+    // NEC-5 has no second medium (EZNEC deletes it): the first is the ground.
+    let d = deck(&m, Engine::Nec5);
+    assert_eq!(cards(&d, "GD"), ["2 0 0 0 17 0.0123 0 0"]);
+    assert!(d.notes.iter().any(|n| n.contains("no second ground medium")));
+
+    // High accuracy, as in gnd-two-ha: GN 2 for the first medium and GD for
+    // the second; NEC-2 gets the radial boundary from RP 3.
+    if let Ground::Real { model, media } = &mut m.ground {
+        *model = RealGroundModel::HighAccuracy;
+        media[1].r_coord_m = 9.144;
+    }
+    for (engine, kind, rp) in [(Engine::Nec2, 0, 3), (Engine::Nec4, 2, 0)] {
+        let d = deck(&m, engine);
+        assert_eq!(cards(&d, "GN"), ["2 0 0 0 17 0.0123"]);
+        assert_eq!(cards(&d, "GD"), [format!("{kind} 0 0 0 17 0.0045 9.144 0.6096")]);
+        assert_eq!(cards(&d, "RP"), [format!("{rp} 1 361 1000 67 0 0 1")]);
+    }
+    let d = deck(&m, Engine::Nec5);
+    assert_eq!(cards(&d, "GN"), ["2 0 0 0 17 0.0123"]);
+    assert!(cards(&d, "GD").is_empty());
 }
 
 #[test]

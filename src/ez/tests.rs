@@ -425,8 +425,12 @@ fn transmission_lines() {
     assert_eq!(t[1].loss_db_per_m, 0.049212597);
     assert!(f.report.unclaimed.is_empty());
 
-    // Any other negative end-2 wire is not understood.
+    // Wire number -2 is an open stub (stub-open.ez).
     e.tl(1, 1, 50.0, -2, 0.0, 450.0, 1.2192, 1.0);
+    assert_eq!(e.read().model.transmission_lines[1].end2, TlEnd2::OpenStub);
+
+    // Any other negative end-2 wire is not understood.
+    e.tl(1, 1, 50.0, -3, 0.0, 450.0, 1.2192, 1.0);
     assert_eq!(e.err().offset, Some(HEADER_LEN + RECORD_LEN + 0x73));
 }
 

@@ -184,9 +184,10 @@ pub enum TlEnd2 {
         wire: u16,
         position_pct: f32,
     },
-    /// Wire number −1: a stub. The hand-made decks for the six course models
-    /// that have one all end it in a short circuit.
+    /// Wire number −1: a stub whose far end is a short circuit.
     ShortedStub,
+    /// Wire number −2: a stub whose far end is open.
+    OpenStub,
 }
 
 #[derive(Debug, Clone, PartialEq)]

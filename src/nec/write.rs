@@ -682,27 +682,33 @@ fn cards_at(m: &EzModel, options: &Options, f_mhz: f64) -> Result<Cards, Convert
                     networks.card("TL", &[ta, sa, tb, sb], &[t.z0_ohm as f64, length, 0.0, 0.0, 0.0, 0.0])?;
                 }
             }
-            TlEnd2::ShortedStub => {
+            TlEnd2::ShortedStub | TlEnd2::OpenStub => {
                 let Some(length) = t.length_m else {
                     return Err(ConvertError(format!("transmission line {no} is a stub with no length")));
                 };
+                let open = t.end2 == TlEnd2::OpenStub;
+                let kind = if open { "an open" } else { "a shorted" };
                 let d = dummy(&mut dummies);
                 if lossy {
-                    let y = elements::lossy_shorted_stub(z0, length as f64, vf, t.loss_db_per_m as f64, f_mhz);
+                    let stub = if open {
+                        elements::lossy_open_stub
+                    } else {
+                        elements::lossy_shorted_stub
+                    };
+                    let y = stub(z0, length as f64, vf, t.loss_db_per_m as f64, f_mhz);
                     networks.card("NT", &[ta, sa, d, 1], &[y.re, y.im, 0.0, 0.0, 0.0, 0.0])?;
                     varies = true;
                     w.note(format!(
-                        "transmission line {no} is a shorted stub with loss; it is a network (NT) {computed}"
+                        "transmission line {no} is {kind} stub with loss; it is a network (NT) {computed}"
                     ));
                 } else {
-                    networks.card(
-                        "TL",
-                        &[ta, sa, d, 1],
-                        &[z0, length as f64 / vf, 0.0, 0.0, STUB_SHORT_S, 0.0],
-                    )?;
+                    // As EZNEC writes it: a short is a large admittance across
+                    // the dummy segment, an open end is none.
+                    let end = if open { 0.0 } else { STUB_SHORT_S };
+                    networks.card("TL", &[ta, sa, d, 1], &[z0, length as f64 / vf, 0.0, 0.0, end, 0.0])?;
                 }
                 w.note(format!(
-                    "transmission line {no} is a shorted stub; wire {d} is a dummy that carries its shorted end"
+                    "transmission line {no} is {kind} stub; wire {d} is a dummy that carries its far end"
                 ));
             }
         }
@@ -724,12 +730,6 @@ fn cards_at(m: &EzModel, options: &Options, f_mhz: f64) -> Result<Cards, Convert
         )?;
         varies = true;
         w.note(format!("L network {} is a network (NT) {computed}", i + 1));
-        if n.ports.iter().any(|p| p.connection == Connection::Parallel) {
-            w.note(format!(
-                "L network {}: a port's R, L and C are in parallel; this form has not been checked against EZNEC",
-                i + 1
-            ));
-        }
     }
 
     // Ground and pattern.
@@ -751,6 +751,14 @@ fn cards_at(m: &EzModel, options: &Options, f_mhz: f64) -> Result<Cards, Convert
         }
         Ground::Real { model, media } => {
             let first = &media[0];
+            // NEC-5 has no second medium: there GD's distance and drop fields
+            // mean something else, and EZNEC deletes the medium.
+            let media = if engine == Engine::Nec5 && media.len() > 1 {
+                w.note("NEC-5 has no second ground medium; only the first is used, as in EZNEC");
+                &media[..1]
+            } else {
+                &media[..]
+            };
             let second_kind = if engine == Engine::Nec2 { 0 } else { 2 };
             let gd = |medium: &Medium, ground: &mut Writer| {
                 ground.card(
@@ -774,7 +782,6 @@ fn cards_at(m: &EzModel, options: &Options, f_mhz: f64) -> Result<Cards, Convert
                     if let Some(second) = media.get(1) {
                         gd(second, &mut ground)?;
                         cliff = true;
-                        w.note("the second ground medium is a GD card; this form has not been checked against EZNEC");
                     }
                 }
                 RealGroundModel::Mininec => {

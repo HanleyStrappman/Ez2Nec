@@ -29,9 +29,10 @@ cards are the engine's own:
 | Insulation | equivalent radius and `LD 2` | `IS` | equivalent radius and `LD 2` |
 | Transmission line | `TL` | `TL` | `TL` at segment ends |
 | Line with loss, L network | `NT` at the model's frequency | the same | the same |
-| Shorted stub | `TL` to a dummy wire | the same | the same |
+| Shorted or open stub | `TL` to a dummy wire | the same | the same |
 | Free space, perfect ground | no `GN`, `GN 1` | the same | the same |
 | Real, high accuracy | `GN 2` | `GN 2` | `GN 2` |
+| Second ground medium | `GD`, `RP 3` | `GD` | left out, as EZNEC does |
 | Real, MININEC | `GN 1`, `GD`, `RP 3` | `GN 1`, `GD` | `GN 1`, `GD` |
 
 Geometry is in the model's display unit with a `GS` card, and source values
@@ -66,12 +67,6 @@ sweep settings, and the EZNEC version and engine that saved it. It then lists
 
 The decoder refuses a file whose layout it doesn't recognise, and treats an
 unknown code in a field that changes the model as an error. It never guesses.
-
-## Not yet confirmed against EZNEC
-
-- A second ground medium, and L network ports with R, L and C in parallel.
-- Whether a stub can be open as well as shorted; only shorted stubs have
-  been seen.
 
 ## Building
 
