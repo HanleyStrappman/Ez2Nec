@@ -1,0 +1,17 @@
+[package]
+name = "ez2nec"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Convert EZNEC .ez antenna models to NEC decks for NEC-2, NEC-4 and NEC-5"
+license = "Apache-2.0"
+authors = ["Scott Robinson (AG7T)"]
+readme = "README.md"
+keywords = ["antenna", "nec", "eznec", "ham-radio"]
+categories = ["command-line-utilities", "science"]
+
+[dependencies]
+
+[profile.release]
+lto = true
+codegen-units = 1
