@@ -15,3 +15,14 @@ categories = ["command-line-utilities", "science"]
 [profile.release]
 lto = true
 codegen-units = 1
+
+# `cargo release`: bump the version, commit and tag. Pushing stays a separate
+# step, and nothing goes to crates.io.
+[package.metadata.release]
+publish = false
+push = false
+allow-branch = ["master"]
+tag-name = "v{{version}}"
+tag-message = "ez2nec {{version}}"
+pre-release-commit-message = "Release {{version}}"
+pre-release-hook = ["./check.sh"]

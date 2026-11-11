@@ -91,6 +91,58 @@ directories:
 
 That test fails if any file is refused or has unaccounted bytes.
 
+## Checking before a push
+
+    ./check.sh
+
+It runs the format check, clippy with warnings as errors, and the tests.
+Anything may be pushed to `master` once it passes; a push to `master` builds
+nothing.
+
+## Releasing
+
+Releases use [cargo-release](https://github.com/crate-ci/cargo-release)
+(`cargo install cargo-release`). Its settings are in `Cargo.toml`: it never
+pushes and never publishes to crates.io.
+
+1. With `master` clean and ready, see what the release would do. Use `minor`
+   or `major` in place of `patch` as the change requires:
+
+       cargo release patch
+
+2. Do it:
+
+       cargo release patch --execute
+
+   This sets the new version in `Cargo.toml` and `Cargo.lock`, runs
+   `./check.sh`, commits "Release x.y.z" and creates the tag `vx.y.z`.
+
+   To release the version `Cargo.toml` already has, as for the first
+   release, leave the level out: `cargo release --execute`. That only
+   creates the tag.
+
+3. Push the commit and the tag:
+
+       git push origin master vx.y.z
+
+Pushing the tag starts the Release workflow on GitHub
+(`.github/workflows/release.yml`). It checks that the tag matches the version
+in `Cargo.toml`, runs `./check.sh`, builds, and creates the GitHub release
+with these files and their SHA-256 checksums:
+
+| File | For |
+|---|---|
+| `ez2nec-vx.y.z-linux-x86_64.tar.gz` | Any x86-64 Linux; statically linked |
+| `ez2nec-vx.y.z-windows-x86_64.zip` | Windows, x86-64 |
+| `ez2nec-vx.y.z-macos-arm64.tar.gz` | macOS, Apple silicon |
+| `ez2nec-vx.y.z-macos-x86_64.tar.gz` | macOS, Intel |
+
+The macOS binaries are not signed. After a browser download, clear the
+quarantine flag once: `xattr -d com.apple.quarantine ez2nec`.
+
+If the workflow fails, fix the cause on `master` and release the next patch
+version; a pushed tag is not moved.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
