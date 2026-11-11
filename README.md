@@ -54,8 +54,6 @@ unknown code in a field that changes the model as an error. It never guesses.
 
 ## Not yet confirmed against EZNEC
 
-- Where EZNEC puts a NEC-5 source that is not half-way along an odd number of
-  segments. Ez2Nec uses the nearest segment end and says so in the deck.
 - A second ground medium, and L network ports with R, L and C in parallel.
 - Whether a stub can be open as well as shorted; only shorted stubs have
   been seen.

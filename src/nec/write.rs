@@ -199,9 +199,12 @@ impl Geometry<'_> {
     ///
     /// On NEC-2 and NEC-4.2 it is the segment holding the point (EZNEC's floor
     /// rule). On NEC-5 it is the segment junction nearest the point, with a
-    /// half rounded up, as EZNEC's NEC-5 exports show for sources and for the
-    /// line ends of 2270ax2 (where EZNEC breaks exact ties either way). A
-    /// junction at an open wire end can't carry anything, so it moves one in.
+    /// half rounded up. EZNEC's NEC-5 exports confirm it: a source at 50% of
+    /// 20 segments is at the far end of segment 10, one at 30% of 21 at the
+    /// far end of segment 6 (the floor rule would say 7), and line ends at
+    /// 50% of 20 at segment 10. EZNEC breaks exact ties either way (2270ax2).
+    /// EZNEC won't put a source on an open wire end with NEC-5, so a
+    /// junction there moves one in.
     fn attach(&self, number: u16, pct: f32) -> Attach {
         let n = self.segments(number);
         if !self.at_nodes {
@@ -332,18 +335,10 @@ fn feeds(s: &Source, g: &Geometry, source_no: usize, w: &mut Writer) -> Result<V
 
 /// NEC-5 places sources at segment ends, so a split source is one source at
 /// its junction and any other source goes to the nearest junction.
-fn nec5_feed(s: &Source, g: &Geometry, source_no: usize, w: &mut Writer) -> Feed {
-    let a = g.attach(s.wire, s.position_pct);
-    let n = g.segments(s.wire);
-    if !s.kind.is_split() && a.index != segment_at(s.position_pct, n) {
-        w.note(format!(
-            "source {source_no}: NEC-5 places sources at segment ends; this one is at the end nearest {}% of wire {}. EZNEC's own choice in this case is not confirmed",
-            s.position_pct, s.wire
-        ));
-    }
+fn nec5_feed(s: &Source, g: &Geometry) -> Feed {
     Feed {
         wire: s.wire,
-        segment: a.segment,
+        segment: g.attach(s.wire, s.position_pct).segment,
         factor: 1.0,
     }
 }
@@ -544,7 +539,7 @@ pub fn write_deck(m: &EzModel, options: &Options) -> Result<Deck, ConvertError> 
         let value = C::polar(SQRT2 * s.magnitude as f64, s.phase_deg as f64);
         let current = matches!(s.kind, SourceKind::Current | SourceKind::SplitCurrent);
         if engine == Engine::Nec5 {
-            let feed = nec5_feed(s, &g, i + 1, &mut w);
+            let feed = nec5_feed(s, &g);
             let kind = if current { 4 } else { 0 };
             sources.card("EX", &[kind, feed.wire as i64, feed.segment, 0], &[value.re, value.im])?;
             if s.kind.is_split() {

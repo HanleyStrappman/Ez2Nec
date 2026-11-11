@@ -639,8 +639,27 @@ fn nec5_attaches_at_segment_ends() {
     let mut m = base();
     m.wires[0].segments = 20;
     let d = deck(&m, Engine::Nec5);
+    // EZNEC's export of this case: EX 0,1,10,0,1.414214,0.
     assert_eq!(cards(&d, "EX"), ["0 1 10 0 1.414214 0"]);
-    assert!(d.notes.iter().any(|n| n.contains("not confirmed")));
+    // 30% of 21 segments: EZNEC writes segment 6, where the floor rule gives 7.
+    let mut odd = base();
+    odd.sources[0].position_pct = 30.0;
+    assert_eq!(cards(&deck(&odd, Engine::Nec5), "EX"), ["0 1 6 0 1.414214 0"]);
+    assert_eq!(cards(&deck(&odd, Engine::Nec4), "EX"), ["0 1 7 0 1.414214 0"]);
+    // Line ends at 50% of 20 segments: EZNEC writes TL 1,10,2,10,75.,4.863592.
+    let mut tl = two_wires();
+    tl.wires[0].segments = 20;
+    tl.wires[1].segments = 20;
+    tl.transmission_lines = vec![line(
+        TlEnd2::Wire {
+            wire: 2,
+            position_pct: 50.0,
+        },
+        75.0,
+        Some(3.2099707),
+        0.66,
+    )];
+    assert_eq!(cards(&deck(&tl, Engine::Nec5), "TL"), ["1 10 2 10 75 4.863592 0 0 0 0"]);
     assert_eq!(cards(&deck(&m, Engine::Nec4), "EX"), ["0 1 11 0 1.414214 0"]);
 
     // A source at an open end moves to the first junction inside.
