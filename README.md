@@ -32,7 +32,7 @@ cards are the engine's own:
 | Shorted or open stub | `TL` to a dummy wire | the same | the same |
 | Free space, perfect ground | no `GN`, `GN 1` | the same | the same |
 | Real, high accuracy | `GN 2` | `GN 2` | `GN 2` |
-| Second ground medium | `GD`, `RP 3` | `GD` | left out, as EZNEC does |
+| Second ground medium | `GD`, `RP 3` | `GD` | left out: NEC-5 has no card for it |
 | Real, MININEC | `GN 1`, `GD`, `RP 3` | `GN 1`, `GD` | `GN 1`, `GD` |
 
 Geometry is in the model's display unit with a `GS` card, and source values
