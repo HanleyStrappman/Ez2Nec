@@ -57,7 +57,10 @@ sweep stored in the model instead: start, then each step up to stop.
   Given `GN 1` and `GD` once, NEC-5 solves the first frequency over perfect
   ground and the later ones over the real ground.
 
-Without `--sweep`, a stored sweep is noted and not written.
+Without `--sweep`, a stored sweep is noted and not written. With `--sweep`, a
+model that stores no sweep is refused: no deck is written, the reason
+("the model stores no frequency sweep") goes to standard error, and the exit
+status is 1.
 
 `--dump` prints the decoded model in its own display unit: wires, sources,
 loads, transmission lines, L networks, ground, wire loss, insulation, plot and
