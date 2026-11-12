@@ -34,6 +34,7 @@ cards are the engine's own:
 | Real, high accuracy | `GN 2` | `GN 2` | `GN 2` |
 | Second ground medium | `GD`, `RP 3` | `GD` | left out: NEC-5 has no card for it |
 | Real, MININEC | `GN 1`, `GD`, `RP 3` | `GN 1`, `GD` | `GN 1`, `GD` |
+| Ground wave distance and observation height | `RP 1`; the field is near zero over the MININEC-type ground | the same | `RP 1` |
 
 Geometry is in the model's display unit with a `GS` card, and source values
 are peak (EZNEC's are RMS). Each stepped-diameter section stays its own wire;
