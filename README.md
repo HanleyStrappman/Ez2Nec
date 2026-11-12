@@ -69,6 +69,25 @@ sweep settings, and the EZNEC version and engine that saved it. It then lists
 The decoder refuses a file whose layout it doesn't recognise, and treats an
 unknown code in a field that changes the model as an error. It never guesses.
 
+## Installing
+
+Download the archive for your system from the GitHub release, unpack it, and
+put `ez2nec` (`ez2nec.exe` on Windows) somewhere on your `PATH`.
+
+The macOS binaries are not notarized, so after a browser download macOS
+blocks the first run. To allow it once:
+
+1. In Terminal, run `ez2nec --version`. macOS says it can't verify ez2nec;
+   close that message.
+2. Open System Settings → Privacy & Security. Under Security, next to the
+   message about ez2nec, click Open Anyway.
+3. Run `ez2nec --version` again. A dialog asks whether to open it; allow it
+   and enter your password. From then on it runs without asking.
+
+Or, in Terminal, clear the download's quarantine flag instead:
+
+    xattr -d com.apple.quarantine ez2nec
+
 ## Building
 
     cargo build --release
@@ -133,8 +152,7 @@ with these files and their SHA-256 checksums:
 | `ez2nec-vx.y.z-macos-arm64.tar.gz` | macOS, Apple silicon |
 | `ez2nec-vx.y.z-macos-x86_64.tar.gz` | macOS, Intel |
 
-The macOS binaries are not signed. After a browser download, clear the
-quarantine flag once: `xattr -d com.apple.quarantine ez2nec`.
+The macOS binaries are not notarized; see Installing for the first run.
 
 If the workflow fails, fix the cause on `master` and release the next patch
 version; a pushed tag is not moved.
