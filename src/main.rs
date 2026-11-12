@@ -1,3 +1,4 @@
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -26,6 +27,41 @@ fn usage_error(message: &str) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// Why writing to standard output stopped.
+#[derive(Debug, PartialEq)]
+enum Stop {
+    /// The reader went away, as in `ez2nec --dump FILE.ez | head`: the rest
+    /// of the output isn't wanted, which is not an error.
+    ReaderGone,
+    /// Any other write error, already reported on standard error.
+    Failed,
+}
+
+impl Stop {
+    fn exit_code(self, failed_before: bool) -> ExitCode {
+        match self {
+            Stop::ReaderGone if !failed_before => ExitCode::SUCCESS,
+            _ => ExitCode::from(1),
+        }
+    }
+}
+
+fn emit_to(out: &mut impl Write, text: &str) -> Result<(), Stop> {
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::BrokenPipe => Err(Stop::ReaderGone),
+        Err(e) => {
+            eprintln!("ez2nec: standard output: {e}");
+            Err(Stop::Failed)
+        }
+    }
+}
+
+/// Writes to standard output. `print!` would panic when the reader has gone.
+fn emit(text: &str) -> Result<(), Stop> {
+    emit_to(&mut std::io::stdout().lock(), text)
+}
+
 fn read(path: &str) -> Result<ez::EzFile, String> {
     let data = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     ez::read_ez(&data).map_err(|e| format!("{path}: {e}"))
@@ -41,12 +77,16 @@ fn main() -> ExitCode {
     while let Some(a) = args.next() {
         match a.as_str() {
             "-h" | "--help" => {
-                println!("{USAGE}");
-                return ExitCode::SUCCESS;
+                return match emit(&format!("{USAGE}\n")) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(stop) => stop.exit_code(false),
+                };
             }
             "--version" => {
-                println!("ez2nec {}", env!("CARGO_PKG_VERSION"));
-                return ExitCode::SUCCESS;
+                return match emit(&format!("ez2nec {}\n", env!("CARGO_PKG_VERSION"))) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(stop) => stop.exit_code(false),
+                };
             }
             "--dump" => want_dump = true,
             "--sweep" => sweep = true,
@@ -79,16 +119,21 @@ fn main() -> ExitCode {
         }
         let mut failed = false;
         for (i, path) in files.iter().enumerate() {
+            let mut text = String::new();
             if i > 0 {
-                println!();
+                text.push('\n');
             }
-            println!("File:       {path}");
-            match read(path) {
-                Ok(file) => print!("{}", dump::dump(&file)),
-                Err(e) => {
-                    eprintln!("ez2nec: {e}");
-                    failed = true;
-                }
+            text.push_str(&format!("File:       {path}\n"));
+            let file = read(path);
+            if let Ok(file) = &file {
+                text.push_str(&dump::dump(file));
+            }
+            if let Err(stop) = emit(&text) {
+                return stop.exit_code(failed);
+            }
+            if let Err(e) = file {
+                eprintln!("ez2nec: {e}");
+                failed = true;
             }
         }
         return if failed { ExitCode::from(1) } else { ExitCode::SUCCESS };
@@ -139,7 +184,51 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         }
-        None => print!("{}", deck.text),
+        None => {
+            if let Err(stop) = emit(&deck.text) {
+                return stop.exit_code(false);
+            }
+        }
     }
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    /// A writer whose every write fails with the given error kind.
+    struct Failing(ErrorKind);
+
+    impl Write for Failing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(self.0))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn emit_writes_the_text() {
+        let mut out = Vec::new();
+        assert_eq!(emit_to(&mut out, "CE\n"), Ok(()));
+        assert_eq!(out, b"CE\n");
+    }
+
+    #[test]
+    fn a_closed_pipe_stops_quietly() {
+        let stop = emit_to(&mut Failing(ErrorKind::BrokenPipe), "CE\n");
+        assert_eq!(stop, Err(Stop::ReaderGone));
+        assert_eq!(Stop::ReaderGone.exit_code(false), ExitCode::SUCCESS);
+        assert_eq!(Stop::ReaderGone.exit_code(true), ExitCode::from(1));
+    }
+
+    #[test]
+    fn other_write_errors_fail() {
+        let stop = emit_to(&mut Failing(ErrorKind::PermissionDenied), "CE\n");
+        assert_eq!(stop, Err(Stop::Failed));
+        assert_eq!(Stop::Failed.exit_code(false), ExitCode::from(1));
+    }
 }
