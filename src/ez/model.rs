@@ -267,6 +267,7 @@ pub struct Plot {
     /// The 2D cut (header 0x09): with a 3D plot this is `Elevation`; with code `2` it is `Azimuth`.
     pub cut: PlotCut,
     /// Elevation angle of an azimuth plot, or azimuth of an elevation plot, degrees.
+    /// With a ground-wave distance it is the observation height, metres.
     pub angle_deg: f32,
     pub step_deg: f32,
     pub range_deg: f32,

@@ -662,6 +662,12 @@ fn patterns() {
     m.plot.angle_deg = 0.0;
     m.plot.ground_wave_distance_m = 3762.756;
     assert_eq!(cards(&deck(&m, Engine::Nec4), "RP"), ["1 1 361 1000 0 0 0 1 3762.756"]);
+    // An observation height of 10 m: EZNEC writes RP 1,1,361,1000,10.,0.,0.,1.,3762.756.
+    m.plot.angle_deg = 10.0;
+    assert_eq!(cards(&deck(&m, Engine::Nec4), "RP"), ["1 1 361 1000 10 0 0 1 3762.756"]);
+    // Over the MININEC-type ground only NEC-5 computes it.
+    let warned = |e| deck(&m, e).notes.iter().any(|n| n.contains("ground wave"));
+    assert!(warned(Engine::Nec2) && warned(Engine::Nec4) && !warned(Engine::Nec5));
 }
 
 #[test]

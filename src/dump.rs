@@ -300,19 +300,28 @@ pub fn dump(file: &EzFile) -> String {
         PlotCut::Azimuth => "azimuth",
         PlotCut::Elevation => "elevation",
     };
-    let _ = writeln!(
-        o,
-        "\nPlot:       {kind} (2D cut {cut}), angle {} deg, step {} deg, range {} deg",
-        f(p.angle_deg),
-        f(p.step_deg),
-        f(p.range_deg)
-    );
     if p.ground_wave_distance_m != 0.0 {
+        // The angle field holds the observation height.
         let _ = writeln!(
             o,
-            "Ground wave distance: {} {}",
+            "\nPlot:       {kind} (2D cut {cut}), step {} deg, range {} deg",
+            f(p.step_deg),
+            f(p.range_deg)
+        );
+        let _ = writeln!(
+            o,
+            "Ground wave distance: {} {u}, observation height {} {u}",
             len(p.ground_wave_distance_m),
-            unit.symbol()
+            len(p.angle_deg),
+            u = unit.symbol()
+        );
+    } else {
+        let _ = writeln!(
+            o,
+            "\nPlot:       {kind} (2D cut {cut}), angle {} deg, step {} deg, range {} deg",
+            f(p.angle_deg),
+            f(p.step_deg),
+            f(p.range_deg)
         );
     }
     match &m.sweep {

@@ -223,6 +223,9 @@ pub fn read_ez(data: &[u8]) -> Result<EzFile, EzError> {
         }
     }
 
+    // Seen once, in a v7 file saved with a ground-wave observation height.
+    b.unknown(records_end + 0x16, 1, "byte 0x16 after the records ('E' in one file)")?;
+    b.unknown(records_end + 0x33, 1, "byte 0x33 after the records ('S' in one file)")?;
     b.unknown(
         records_end + 0x34,
         1,

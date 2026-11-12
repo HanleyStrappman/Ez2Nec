@@ -842,10 +842,28 @@ fn cards_at(m: &EzModel, options: &Options, f_mhz: f64) -> Result<Cards, Convert
         let thetas = if has_ground { 19 } else { 37 };
         pattern.card("RP", &[mode, thetas, 73, 1001], &[0.0, 0.0, 5.0, 5.0])?;
     } else if p.ground_wave_distance_m != 0.0 && has_ground && !elevation {
+        // EZNEC allows ground wave analysis with an azimuth plot only, and
+        // the angle field then holds the observation height (RP's z).
+        // NEC-2 and NEC-4.2 return fields near zero over GN 1 (perfect
+        // ground); NEC-5 with the GD card gives the real-ground field.
+        if engine != Engine::Nec5
+            && matches!(
+                m.ground,
+                Ground::Real {
+                    model: RealGroundModel::Mininec,
+                    ..
+                }
+            )
+        {
+            w.note(format!(
+                "ground wave with the MININEC-type ground: {} computes it over perfect ground and the field comes out near zero; use the high-accuracy ground or NEC-5",
+                engine.name()
+            ));
+        }
         pattern.card(
             "RP",
             &[1, 1, points(360.0), 1000],
-            &[0.0, 0.0, 0.0, step, p.ground_wave_distance_m as f64],
+            &[p.angle_deg as f64, 0.0, 0.0, step, p.ground_wave_distance_m as f64],
         )?;
     } else if elevation {
         // From the horizon over the top to the other horizon; all the way
